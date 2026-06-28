@@ -1,0 +1,6 @@
+# Pinned dependencies for Point Cloud Semantic Segmentation.
+#
+# Deliberately empty for now — dependencies are added the chunk they are
+# first used, each pinned to an exact version so the local CPU env and the
+# Colab GPU env run identical code. (Chunk 4 adds torch, Chunk 1 adds open3d,
+# and so on.)
