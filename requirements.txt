@@ -1,6 +1,9 @@
 # Pinned dependencies for Point Cloud Semantic Segmentation.
 #
-# Deliberately empty for now — dependencies are added the chunk they are
-# first used, each pinned to an exact version so the local CPU env and the
-# Colab GPU env run identical code. (Chunk 4 adds torch, Chunk 1 adds open3d,
-# and so on.)
+# Dependencies are added the chunk they are first used, each pinned to an exact
+# version so the local CPU env and the Colab GPU env run identical code.
+# (Chunk 4 adds torch, and so on.)
+
+# Chunk 1 — loading + viewing point clouds.
+open3d==0.19.0   # 3D loading & interactive visualization (cp312 wheel, NumPy 2)
+numpy==2.5.0     # array math (pulled in by open3d; pinned for reproducibility)

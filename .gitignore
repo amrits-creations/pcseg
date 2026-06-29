@@ -14,5 +14,9 @@ __pycache__/
 # Kept local-only for now (not published to the repo yet)
 BUILD_PROCESS.md
 README.md
+DECISIONS.md
 
-# (data/, outputs/, checkpoints, mlruns/ ... get added here when those chunks land)
+# Datasets — fetched from the public ETH mirror (see README); never committed to git
+data/
+
+# (outputs/, checkpoints, mlruns/ ... get added here when those chunks land)
