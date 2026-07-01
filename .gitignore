@@ -19,4 +19,7 @@ DECISIONS.md
 # Datasets — fetched from the public ETH mirror (see README); never committed to git
 data/
 
+# Personal study notes — local-only scratchpad for understanding the project
+notes/
+
 # (outputs/, checkpoints, mlruns/ ... get added here when those chunks land)

@@ -7,3 +7,11 @@
 # Chunk 1 — loading + viewing point clouds.
 open3d==0.19.0   # 3D loading & interactive visualization (cp312 wheel, NumPy 2)
 numpy==2.5.0     # array math (pulled in by open3d; pinned for reproducibility)
+
+# Chunk 3 — PyTorch Dataset/DataLoader that feeds blocks to the model.
+# Locally we install the CPU build:
+#   pip install torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
+# On Colab, install the default (CUDA) wheel of the SAME version so the code is
+# identical; only the compute backend differs.
+torch==2.12.1    # tensors, Dataset/DataLoader (CPU wheel locally, CUDA on Colab)
+pytest==8.2.2    # runs the CPU smoke test (tests/); also used by CI in Chunk 13
