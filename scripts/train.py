@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+import wandb
 from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -108,6 +109,19 @@ def main():
     device = pick_device(args.device)
     print(f"device: {device}")
 
+    if not args.smoke:
+        wandb.init(
+            project="pcseg",
+            config={
+                "epochs": args.epochs,
+                "batch_size": args.batch_size,
+                "num_points": args.num_points,
+                "lr": args.lr,
+                "feature_reg_weight": FEATURE_REG_WEIGHT,
+                "device": str(device),
+            },
+        )
+
     if args.smoke:
         train_ds = build_smoke_dataset(args.num_points)
         val_ds = None
@@ -139,6 +153,17 @@ def main():
         print(f"epoch {epoch}/{args.epochs}")
         loss, acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
         print(f"  epoch {epoch}: mean loss {loss:.4f}, point acc {acc:.3f}")
+        wandb.log({"train/loss": loss, "train/point_acc": acc}, step=epoch)
+
+    ckpt_dir = Path("checkpoints")
+    ckpt_dir.mkdir(exist_ok=True)
+    ckpt_path = ckpt_dir / f"pointnet_{wandb.run.id}.pt"
+    torch.save({"model_state": model.state_dict(), "config": dict(wandb.config)}, ckpt_path)
+    artifact = wandb.Artifact("pointnet-semseg", type="model")
+    artifact.add_file(str(ckpt_path))
+    wandb.log_artifact(artifact)
+    wandb.finish()
+    print(f"checkpoint saved → {ckpt_path}")
 
 
 if __name__ == "__main__":

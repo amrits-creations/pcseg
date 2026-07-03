@@ -15,3 +15,6 @@ numpy==2.5.0     # array math (pulled in by open3d; pinned for reproducibility)
 # identical; only the compute backend differs.
 torch==2.12.1    # tensors, Dataset/DataLoader (CPU wheel locally, CUDA on Colab)
 pytest==8.2.2    # runs the CPU smoke test (tests/); also used by CI in Chunk 13
+
+# Chunk 5 — experiment tracking: logging params, metrics, and model artifacts to W&B.
+wandb==0.28.0    # experiment tracking dashboard (Weights & Biases free tier)

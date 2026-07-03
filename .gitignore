@@ -22,4 +22,6 @@ data/
 # Personal study notes — local-only scratchpad for understanding the project
 notes/
 
-# (outputs/, checkpoints, mlruns/ ... get added here when those chunks land)
+# Chunk 5 — W&B local run cache and saved model checkpoints
+wandb/
+checkpoints/
