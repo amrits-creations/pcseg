@@ -1,13 +1,3 @@
-"""CPU smoke test for the Chunk-3 data pipeline.
-
-No real dataset needed: we synthesize a couple of tiny "rooms" on disk and push
-them through S3DISDataset + a DataLoader, asserting the shapes/dtypes/ranges a
-model will rely on. Its only job is "the plumbing runs and the tensors are
-correctly shaped" before we spend Colab GPU time. Runs in well under a second.
-
-    pytest tests/test_dataset.py
-"""
-
 from __future__ import annotations
 
 import numpy as np
@@ -15,11 +5,11 @@ import torch
 from torch.utils.data import DataLoader
 
 from pcseg import NUM_CLASSES
-from pcseg.data import NUM_POINTS, S3DISDataset, make_splits
+from pcseg.data import NUM_POINTS, S3DISDataset
+from pcseg.preprocessing import make_splits
 
 
 def _make_fake_room(path, n=5000, seed=0):
-    """Write a random (n, 7) xyzrgb+label room.npy spanning a ~3m cube."""
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0.0, 3.0, size=(n, 3)).astype(np.float32)
     rgb = rng.integers(0, 256, size=(n, 3)).astype(np.float32)
@@ -40,9 +30,7 @@ def test_single_item_shapes_and_ranges(tmp_path):
     assert pts.dtype == torch.float32
     assert lab.dtype == torch.int64
     assert 0 <= int(lab.min()) and int(lab.max()) < NUM_CLASSES
-    # colour channels normalized to [0, 1]
     assert pts[:, 3:6].min() >= 0.0 and pts[:, 3:6].max() <= 1.0 + 1e-6
-    # room-normalized coords in [0, 1]
     assert pts[:, 6:9].min() >= -1e-6 and pts[:, 6:9].max() <= 1.0 + 1e-6
 
 

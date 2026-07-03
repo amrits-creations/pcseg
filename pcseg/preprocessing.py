@@ -1,48 +1,64 @@
-"""Preprocess raw S3DIS rooms into model-ready .npy files (Chunk 3, offline).
-
-Run ONCE after the dataset is downloaded (see the README "Dataset" section).
-For every room it reads the Annotations/ folder, tags each point with its class
-integer, and writes one flat float32 array
-
-    data/processed/<Area>/<room>.npy   =   [x y z r g b label]   shape (N, 7)
-
-collapsing each room's messy folder-of-txt into a single fast-loading file.
-Then it freezes the train/val/test ROOM split to
-
-    data/processed/splits.json
-
-(Area 5 = test; a few held-out train-area rooms = val) so training reads the
-exact same split every time. Re-runs skip rooms already written unless
---overwrite is given.
-
-Examples (from the repo root):
-    python scripts/preprocess.py                 # all rooms
-    python scripts/preprocess.py --limit 2       # 2 rooms per area (quick check)
-    python scripts/preprocess.py --overwrite     # rebuild everything
-"""
-
 from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
-# Make the repo-root `pcseg` package importable when run directly as a script.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from pcseg import S3DIS_CLASSES
 
-from pcseg.data import make_splits  # noqa: E402
-from pcseg.io import parse_room  # noqa: E402
+CLASS_TO_IDX = {name: i for i, name in enumerate(S3DIS_CLASSES)}
 
-DEFAULT_RAW_ROOT = Path("data/Stanford3dDataset_v1.2_Aligned_Version")
-DEFAULT_OUT_ROOT = Path("data/processed")
+
+def _load_xyzrgb(path: Path) -> np.ndarray:
+    try:
+        return np.loadtxt(path)
+    except ValueError:
+        rows = []
+        with open(path, "r", errors="ignore") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) != 6:
+                    continue
+                try:
+                    rows.append([float(p) for p in parts])
+                except ValueError:
+                    continue
+        return np.asarray(rows, dtype=np.float64)
+
+
+def parse_room(room_dir: Path | str) -> tuple[np.ndarray, np.ndarray]:
+    room_dir = Path(room_dir)
+    ann_dir = room_dir / "Annotations"
+    if not ann_dir.is_dir():
+        raise FileNotFoundError(
+            f"No Annotations/ folder in {room_dir}. "
+            "Check the path points at an extracted S3DIS room."
+        )
+
+    xyzrgb_parts: list[np.ndarray] = []
+    label_parts: list[np.ndarray] = []
+    for ann_file in sorted(ann_dir.glob("*.txt")):
+        class_name = ann_file.stem.rsplit("_", 1)[0]
+        label = CLASS_TO_IDX.get(class_name, CLASS_TO_IDX["clutter"])
+        pts = _load_xyzrgb(ann_file)
+        if pts.size == 0:
+            continue
+        xyzrgb_parts.append(pts[:, :6])
+        label_parts.append(np.full(len(pts), label, dtype=np.int64))
+
+    if not xyzrgb_parts:
+        raise RuntimeError(f"No points parsed from {room_dir}")
+    xyzrgb = np.concatenate(xyzrgb_parts).astype(np.float32)
+    labels = np.concatenate(label_parts)
+    return xyzrgb, labels
 
 
 def find_rooms(raw_root: Path, limit: int | None) -> list[tuple[str, Path]]:
-    """List (area_name, room_dir) for every room that has an Annotations/ folder."""
     rooms: list[tuple[str, Path]] = []
     for area_dir in sorted(raw_root.glob("Area_*")):
         if not area_dir.is_dir():
@@ -54,9 +70,38 @@ def find_rooms(raw_root: Path, limit: int | None) -> list[tuple[str, Path]]:
     return rooms
 
 
+def make_splits(
+    processed_root: Path | str,
+    val_per_area: int = 2,
+    seed: int = 42,
+) -> dict[str, list[Path]]:
+    processed_root = Path(processed_root)
+    rng = random.Random(seed)
+    train: list[Path] = []
+    val: list[Path] = []
+    test: list[Path] = []
+
+    for area_dir in sorted(processed_root.glob("Area_*")):
+        rooms = sorted(area_dir.glob("*.npy"))
+        if not rooms:
+            continue
+        if area_dir.name == "Area_5":
+            test.extend(rooms)
+            continue
+        held = set(rng.sample(rooms, min(val_per_area, len(rooms))))
+        for room in rooms:
+            (val if room in held else train).append(room)
+
+    return {"train": train, "val": val, "test": test}
+
+
+DEFAULT_RAW_ROOT = Path("data/Stanford3dDataset_v1.2_Aligned_Version")
+DEFAULT_OUT_ROOT = Path("data/processed")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        description="Preprocess raw S3DIS rooms into model-ready .npy files and create train/val/test split."
     )
     parser.add_argument("--raw-root", type=Path, default=DEFAULT_RAW_ROOT)
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
@@ -89,8 +134,6 @@ def main() -> None:
         print(f"  [{i}/{len(rooms)}] {area}/{room_dir.name:<22} "
               f"{len(room):>9,} pts  ({time.time() - t0:4.1f}s)")
 
-    # Freeze the split over whatever is now in out_root (paths stored relative
-    # to out_root so the manifest stays portable across machines/Colab).
     splits = make_splits(args.out_root, val_per_area=args.val_per_area)
     manifest = {
         split: [str(p.relative_to(args.out_root)) for p in paths]
