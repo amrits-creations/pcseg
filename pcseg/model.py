@@ -68,7 +68,7 @@ class PointNetSemSeg(nn.Module):
         x = x.permute(0, 2, 1) # Rearranged for conv1d (batch, channels, points)
         xyz, feat = x[:, :3, :], x[:, 3:, :] 
         # xyz -> shape: (32, 3, 1024) - the x, y, z coordinates
-        # feat -> shape: (32, 6, 1024) — the additional features
+        # feat -> shape: (32, 6, 1024) - the additional features
 
         t_in = self.input_tnet(xyz)
         xyz = torch.bmm(t_in, xyz)

@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from pcseg import NUM_CLASSES  # noqa: E402
 from pcseg.data import NUM_POINTS, S3DISDataset  # noqa: E402
 from pcseg.model import PointNetSemSeg, feature_transform_regularizer  # noqa: E402
 
@@ -54,6 +55,44 @@ def train_one_epoch(model, loader, optimizer, criterion, device, max_steps=None)
     return total_loss / max(steps, 1), total_correct / max(total_points, 1)
 
 
+@torch.no_grad()
+def evaluate(model, loader, criterion, device):
+    """Run the model over the val set and return (loss, point_acc, mIoU).
+
+    mIoU = mean over classes of IoU_c = intersection_c / union_c, where
+    intersection/union are accumulated point counts across the whole val set.
+    Classes absent from the val set (union == 0) are skipped, not counted as 0.
+    """
+    model.eval()
+    inter = torch.zeros(NUM_CLASSES, dtype=torch.long)
+    union = torch.zeros(NUM_CLASSES, dtype=torch.long)
+    total_loss, total_correct, total_points, steps = 0.0, 0, 0, 0
+    for feats, labels in loader:
+        feats, labels = feats.to(device), labels.to(device)
+
+        logits, _ = model(feats)
+        loss = criterion(logits.reshape(-1, logits.shape[-1]), labels.reshape(-1))
+
+        preds = logits.argmax(dim=-1)
+        total_correct += (preds == labels).sum().item()
+        total_points += labels.numel()
+        total_loss += loss.item()
+        steps += 1
+
+        preds = preds.reshape(-1).cpu()
+        labs = labels.reshape(-1).cpu()
+        for c in range(NUM_CLASSES):
+            pred_c = preds == c
+            lab_c = labs == c
+            inter[c] += (pred_c & lab_c).sum()
+            union[c] += (pred_c | lab_c).sum()
+
+    present = union > 0
+    iou = inter[present].float() / union[present].float()
+    miou = iou.mean().item() if present.any() else 0.0
+    return total_loss / max(steps, 1), total_correct / max(total_points, 1), miou
+
+
 def _write_fake_room(path: Path, n=6000, seed=0):
     rng = np.random.default_rng(seed)
     xyz = rng.uniform(0.0, 3.0, size=(n, 3)).astype(np.float32)
@@ -75,12 +114,19 @@ def build_datasets(processed_root: Path, splits_path: Path, num_points: int):
     return train_ds, val_ds
 
 
-def build_smoke_dataset(num_points: int) -> S3DISDataset:
+def build_smoke_datasets(num_points: int) -> tuple[S3DISDataset, S3DISDataset]:
     tmp = Path(tempfile.mkdtemp(prefix="pcseg_smoke_"))
-    rooms = [tmp / "roomA.npy", tmp / "roomB.npy"]
-    for i, r in enumerate(rooms):
+    train_rooms = [tmp / "roomA.npy", tmp / "roomB.npy"]
+    val_rooms = [tmp / "roomV.npy"]
+    for i, r in enumerate(train_rooms + val_rooms):
         _write_fake_room(r, seed=i)
-    return S3DISDataset(rooms, num_points=num_points, training=True, samples_per_epoch=8)
+    train_ds = S3DISDataset(
+        train_rooms, num_points=num_points, training=True, samples_per_epoch=8
+    )
+    val_ds = S3DISDataset(
+        val_rooms, num_points=num_points, training=False, samples_per_epoch=4
+    )
+    return train_ds, val_ds
 
 
 def main():
@@ -123,11 +169,11 @@ def main():
         )
 
     if args.smoke:
-        train_ds = build_smoke_dataset(args.num_points)
-        val_ds = None
+        train_ds, val_ds = build_smoke_datasets(args.num_points)
     else:
         train_ds, val_ds = build_datasets(args.processed_root, args.splits, args.num_points)
     print(f"train blocks/epoch: {len(train_ds)}")
+    print(f"val blocks/epoch: {len(val_ds) if val_ds else 0}")
 
     train_loader = DataLoader(
         train_ds,
@@ -136,24 +182,44 @@ def main():
         num_workers=args.num_workers,
         drop_last=True,
     )
+    val_loader = (
+        DataLoader(
+            val_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            drop_last=False,
+        )
+        if val_ds
+        else None
+    )
 
     model = PointNetSemSeg().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
 
     if args.smoke:
-        print("running smoke test: 2 training steps on synthetic data")
+        print("running smoke test: 2 training steps + 1 eval pass on synthetic data")
         loss, acc = train_one_epoch(
             model, train_loader, optimizer, criterion, device, max_steps=2
         )
-        print(f"smoke OK — mean loss {loss:.4f}, point acc {acc:.3f}")
+        val_loss, val_acc, val_miou = evaluate(model, val_loader, criterion, device)
+        print(
+            f"smoke OK — train loss {loss:.4f}, acc {acc:.3f} | "
+            f"val loss {val_loss:.4f}, acc {val_acc:.3f}, mIoU {val_miou:.3f}"
+        )
         return
 
     for epoch in range(1, args.epochs + 1):
         print(f"epoch {epoch}/{args.epochs}")
         loss, acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
-        print(f"  epoch {epoch}: mean loss {loss:.4f}, point acc {acc:.3f}")
-        wandb.log({"train/loss": loss, "train/point_acc": acc}, step=epoch)
+        print(f"  epoch {epoch}: train loss {loss:.4f}, point acc {acc:.3f}")
+        log = {"train/loss": loss, "train/point_acc": acc}
+        if val_loader is not None:
+            val_loss, val_acc, val_miou = evaluate(model, val_loader, criterion, device)
+            print(f"  epoch {epoch}: val loss {val_loss:.4f}, acc {val_acc:.3f}, mIoU {val_miou:.3f}")
+            log.update({"val/loss": val_loss, "val/point_acc": val_acc, "val/mIoU": val_miou})
+        wandb.log(log, step=epoch)
 
     ckpt_dir = Path("checkpoints")
     ckpt_dir.mkdir(exist_ok=True)
